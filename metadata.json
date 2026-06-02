@@ -1,0 +1,6 @@
+{
+  "name": "Growth Operator Landing Page",
+  "description": "High-end editorial single-page portfolio for a growth operator helping creators scale quietly and globally.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
