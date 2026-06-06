@@ -3,6 +3,8 @@ import path from "path";
 import fs from "fs";
 import crypto from "crypto";
 import { createServer as createViteServer } from "vite";
+import { initializeApp } from "firebase/app";
+import { getFirestore, collection, setDoc, getDocs, doc, deleteDoc, query, orderBy } from "firebase/firestore";
 
 async function startServer() {
   const app = express();
@@ -11,6 +13,22 @@ async function startServer() {
   app.use(express.json());
 
   const LEADS_FILE = path.join(process.cwd(), "leads.json");
+
+  // Initialize Firebase Web SDK for secure Server-side database operations
+  let db: any = null;
+  try {
+    const configPath = path.join(process.cwd(), "firebase-applet-config.json");
+    if (fs.existsSync(configPath)) {
+      const config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+      const firebaseApp = initializeApp(config);
+      db = getFirestore(firebaseApp, config.firestoreDatabaseId);
+      console.log("Connect successfully to cloud Firestore:", config.projectId);
+    } else {
+      console.warn("No firebase-applet-config.json found, running in local-only fallback mode.");
+    }
+  } catch (err) {
+    console.error("Firebase startup integration failed:", err);
+  }
 
   // Helper to read leads from JSON file
   const readLeads = (): any[] => {
@@ -57,7 +75,7 @@ async function startServer() {
   };
 
   // Public endpoint: Submit new lead
-  app.post("/api/leads", (req, res) => {
+  app.post("/api/leads", async (req, res) => {
     const { name, email, handle, revenue, message } = req.body;
     
     if (!name || !email || !revenue) {
@@ -74,31 +92,74 @@ async function startServer() {
       timestamp: new Date().toISOString()
     };
 
+    // Save locally first
     const leads = readLeads();
     leads.unshift(newLead);
     writeLeads(leads);
+
+    // Sync to Cloud Firestore if connected
+    if (db) {
+      try {
+        await setDoc(doc(db, "leads", newLead.id), newLead);
+        console.log(`Lead ${newLead.id} synced to cloud Firebase database successfully.`);
+      } catch (err) {
+        console.error("Failed to sync lead to Firestore:", err);
+      }
+    }
 
     res.status(201).json(newLead);
   });
 
   // Secure endpoint: Read all leads (validated via header key passcode)
-  app.get("/api/leads", (req, res) => {
+  app.get("/api/leads", async (req, res) => {
     if (!validateAdmin(req)) {
       return res.status(401).json({ error: "SECURE CHANNEL CLOSED. INVALID AUTHORIZATION TOKEN." });
     }
+
+    // Try fetching from Cloud Firestore if available
+    if (db) {
+      try {
+        const q = query(collection(db, "leads"), orderBy("timestamp", "desc"));
+        const snapshot = await getDocs(q);
+        const serverLeads: any[] = [];
+        snapshot.forEach((d) => {
+          serverLeads.push(d.data());
+        });
+        
+        // Update local file cache for offline/resilience backup
+        writeLeads(serverLeads);
+        return res.json(serverLeads);
+      } catch (err) {
+        console.error("Failed fetching leads from cloud Firestore, loading local backup:", err);
+      }
+    }
+
     res.json(readLeads());
   });
 
   // Secure endpoint: Delete lead record
-  app.delete("/api/leads/:id", (req, res) => {
+  app.delete("/api/leads/:id", async (req, res) => {
     if (!validateAdmin(req)) {
       return res.status(401).json({ error: "SECURE CHANNEL CLOSED. INVALID AUTHORIZATION TOKEN." });
     }
 
     const { id } = req.params;
+
+    // Remove from local cache
     const leads = readLeads();
     const filtered = leads.filter(l => l.id !== id);
     writeLeads(filtered);
+
+    // Sync deletion to Cloud Firestore
+    if (db) {
+      try {
+        await deleteDoc(doc(db, "leads", id));
+        console.log(`Lead ${id} permanently removed from cloud database.`);
+      } catch (err) {
+        console.error("Failed to delete lead from Firestore:", err);
+      }
+    }
+
     res.json({ success: true });
   });
 

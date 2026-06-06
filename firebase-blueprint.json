@@ -1,0 +1,47 @@
+{
+  "entities": {
+    "Lead": {
+      "title": "Lead",
+      "description": "Information from prospective premium creator partners who submit the strategic intake form.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Secure generated ID code containing operational prefix"
+        },
+        "name": {
+          "type": "string",
+          "description": "Full name of the creator"
+        },
+        "email": {
+          "type": "string",
+          "description": "Verified business email identifier"
+        },
+        "handle": {
+          "type": "string",
+          "description": "Social handles or channel links"
+        },
+        "revenue": {
+          "type": "string",
+          "description": "Monetization tier category descriptor key"
+        },
+        "message": {
+          "type": "string",
+          "description": "Brief strategical brief content message submitted by creator"
+        },
+        "timestamp": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO date-time when lead registered"
+        }
+      },
+      "required": ["id", "name", "email", "revenue", "timestamp"]
+    }
+  },
+  "firestore": {
+    "/leads/{leadId}": {
+      "schema": "Lead",
+      "description": "Collection storing lead contact documents securely in the Firestore instance database"
+    }
+  }
+}
