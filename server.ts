@@ -28,13 +28,45 @@ async function startServer() {
       // In production/Cloud Run containers, try to initialize Firebase Admin SDK to bypass security rules
       let adminSuccess = false;
       try {
-        const adminAppModule = await import("firebase-admin/app");
-        const adminFirestoreModule = await import("firebase-admin/firestore");
+        const adminAppModule: any = await import("firebase-admin/app");
+        const adminFirestoreModule: any = await import("firebase-admin/firestore");
+        const adminCredentialModule: any = await import("firebase-admin");
         
-        const adminApp = adminAppModule.initializeApp({
+        let credential;
+        if (process.env.FIREBASE_SERVICE_ACCOUNT) {
+          try {
+            let parsed: any = process.env.FIREBASE_SERVICE_ACCOUNT.trim();
+            // Handle double-serialized JSON or quotes around the string recursively
+            let previousParsed = "";
+            while (typeof parsed === "string" && parsed !== previousParsed) {
+              previousParsed = parsed;
+              if ((parsed.startsWith('"') && parsed.endsWith('"')) || (parsed.startsWith("'") && parsed.endsWith("'"))) {
+                parsed = parsed.slice(1, -1).trim();
+              }
+              if (parsed.startsWith("{")) {
+                parsed = JSON.parse(parsed);
+              }
+            }
+            
+            if (parsed && typeof parsed === "object") {
+              credential = adminCredentialModule.credential.cert(parsed);
+            } else {
+              throw new Error("Service account is not a valid JSON object after parsing. Got: " + typeof parsed);
+            }
+          } catch (jsonErr) {
+            console.error("Failed parsing FIREBASE_SERVICE_ACCOUNT environment variable:", jsonErr);
+          }
+        }
+
+        const adminOptions: any = {
           projectId: config.projectId,
-        });
-        
+        };
+        if (credential) {
+          adminOptions.credential = credential;
+        }
+
+        const adminApp = adminAppModule.initializeApp(adminOptions);
+
         const dbAdmin = adminFirestoreModule.getFirestore(adminApp, config.firestoreDatabaseId);
         console.log("Firebase Admin SDK initialized successfully for project:", config.projectId);
 
