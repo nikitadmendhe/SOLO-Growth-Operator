@@ -14,15 +14,75 @@ async function startServer() {
 
   const LEADS_FILE = path.join(process.cwd(), "leads.json");
 
-  // Initialize Firebase Web SDK for secure Server-side database operations
-  let db: any = null;
+  // Multi-tier Secure Cloud Database Sync Handlers
+  let saveLeadToCloud = async (lead: any) => {};
+  let getLeadsFromCloud = async (): Promise<any[] | null> => { return null; };
+  let deleteLeadFromCloud = async (id: string) => {};
+
+  // Initialize Firebase Web or Admin SDK
   try {
     const configPath = path.join(process.cwd(), "firebase-applet-config.json");
     if (fs.existsSync(configPath)) {
       const config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
-      const firebaseApp = initializeApp(config);
-      db = getFirestore(firebaseApp, config.firestoreDatabaseId);
-      console.log("Connect successfully to cloud Firestore:", config.projectId);
+      
+      // In production/Cloud Run containers, try to initialize Firebase Admin SDK to bypass security rules
+      let adminSuccess = false;
+      try {
+        const adminAppModule = await import("firebase-admin/app");
+        const adminFirestoreModule = await import("firebase-admin/firestore");
+        
+        const adminApp = adminAppModule.initializeApp({
+          projectId: config.projectId,
+        });
+        
+        const dbAdmin = adminFirestoreModule.getFirestore(adminApp, config.firestoreDatabaseId);
+        console.log("Firebase Admin SDK initialized successfully for project:", config.projectId);
+
+        saveLeadToCloud = async (lead: any) => {
+          await dbAdmin.collection("leads").doc(lead.id).set(lead);
+        };
+
+        getLeadsFromCloud = async (): Promise<any[]> => {
+          const snapshot = await dbAdmin.collection("leads").orderBy("timestamp", "desc").get();
+          const results: any[] = [];
+          snapshot.forEach((docRef: any) => {
+            results.push(docRef.data());
+          });
+          return results;
+        };
+
+        deleteLeadFromCloud = async (id: string) => {
+          await dbAdmin.collection("leads").doc(id).delete();
+        };
+
+        adminSuccess = true;
+      } catch (adminErr) {
+        console.warn("Could not load Firebase Admin SDK credentials, falling back to Web Client SDK:", adminErr);
+      }
+
+      if (!adminSuccess) {
+        const firebaseApp = initializeApp(config);
+        const db = getFirestore(firebaseApp, config.firestoreDatabaseId);
+        console.log("Firebase Web SDK initialized as backup fallback:", config.projectId);
+
+        saveLeadToCloud = async (lead: any) => {
+          await setDoc(doc(db, "leads", lead.id), lead);
+        };
+
+        getLeadsFromCloud = async (): Promise<any[]> => {
+          const q = query(collection(db, "leads"), orderBy("timestamp", "desc"));
+          const snapshot = await getDocs(q);
+          const results: any[] = [];
+          snapshot.forEach((d) => {
+            results.push(d.data());
+          });
+          return results;
+        };
+
+        deleteLeadFromCloud = async (id: string) => {
+          await deleteDoc(doc(db, "leads", id));
+        };
+      }
     } else {
       console.warn("No firebase-applet-config.json found, running in local-only fallback mode.");
     }
@@ -98,13 +158,11 @@ async function startServer() {
     writeLeads(leads);
 
     // Sync to Cloud Firestore if connected
-    if (db) {
-      try {
-        await setDoc(doc(db, "leads", newLead.id), newLead);
-        console.log(`Lead ${newLead.id} synced to cloud Firebase database successfully.`);
-      } catch (err) {
-        console.error("Failed to sync lead to Firestore:", err);
-      }
+    try {
+      await saveLeadToCloud(newLead);
+      console.log(`Lead ${newLead.id} synced to cloud Firebase database successfully.`);
+    } catch (err) {
+      console.error("Failed to sync lead to Firestore:", err);
     }
 
     res.status(201).json(newLead);
@@ -116,22 +174,16 @@ async function startServer() {
       return res.status(401).json({ error: "SECURE CHANNEL CLOSED. INVALID AUTHORIZATION TOKEN." });
     }
 
-    // Try fetching from Cloud Firestore if available
-    if (db) {
-      try {
-        const q = query(collection(db, "leads"), orderBy("timestamp", "desc"));
-        const snapshot = await getDocs(q);
-        const serverLeads: any[] = [];
-        snapshot.forEach((d) => {
-          serverLeads.push(d.data());
-        });
-        
+    // Try fetching from Cloud Firestore
+    try {
+      const serverLeads = await getLeadsFromCloud();
+      if (serverLeads !== null) {
         // Update local file cache for offline/resilience backup
         writeLeads(serverLeads);
         return res.json(serverLeads);
-      } catch (err) {
-        console.error("Failed fetching leads from cloud Firestore, loading local backup:", err);
       }
+    } catch (err) {
+      console.error("Failed fetching leads from cloud Firestore, loading local backup:", err);
     }
 
     res.json(readLeads());
@@ -151,13 +203,11 @@ async function startServer() {
     writeLeads(filtered);
 
     // Sync deletion to Cloud Firestore
-    if (db) {
-      try {
-        await deleteDoc(doc(db, "leads", id));
-        console.log(`Lead ${id} permanently removed from cloud database.`);
-      } catch (err) {
-        console.error("Failed to delete lead from Firestore:", err);
-      }
+    try {
+      await deleteLeadFromCloud(id);
+      console.log(`Lead ${id} permanently removed from cloud database.`);
+    } catch (err) {
+      console.error("Failed to delete lead from Firestore:", err);
     }
 
     res.json({ success: true });
