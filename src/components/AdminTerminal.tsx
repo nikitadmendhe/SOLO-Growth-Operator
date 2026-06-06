@@ -27,6 +27,7 @@ interface AdminTerminalProps {
 
 export default function AdminTerminal({ isOpen, onClose }: AdminTerminalProps) {
   const [passcode, setPasscode] = useState("");
+  const [activePasscode, setActivePasscode] = useState("");
   const [isUnlocked, setIsUnlocked] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
   const [leads, setLeads] = useState<Lead[]>([]);
@@ -34,41 +35,102 @@ export default function AdminTerminal({ isOpen, onClose }: AdminTerminalProps) {
   const [filterRevenue, setFilterRevenue] = useState("all");
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
 
-  // Sync leads from localStorage
-  const loadLeads = () => {
-    try {
-      const stored = localStorage.getItem("_stealth_operator_leads");
-      if (stored) {
-        setLeads(JSON.parse(stored));
-      } else {
-        setLeads([]);
+  // Sync leads from server or localStorage
+  const loadLeads = async (passToUse?: string) => {
+    const code = passToUse || activePasscode || sessionStorage.getItem("_operator_terminal_passcode") || "";
+    
+    if (!code) {
+      try {
+        const stored = localStorage.getItem("_stealth_operator_leads");
+        if (stored) {
+          setLeads(JSON.parse(stored));
+        } else {
+          setLeads([]);
+        }
+      } catch (e) {
+        console.error("Could not parse lead store", e);
       }
-    } catch (e) {
-      console.error("Could not parse lead store", e);
+      return;
+    }
+
+    try {
+      const response = await fetch("/api/leads", {
+        method: "GET",
+        headers: {
+          "x-admin-passcode": code
+        }
+      });
+
+      if (response.ok) {
+        const serverLeads = await response.json();
+        setLeads(serverLeads);
+        // Backup to localStorage for cache
+        localStorage.setItem("_stealth_operator_leads", JSON.stringify(serverLeads));
+      } else {
+        throw new Error("Validation rejected by secure server module");
+      }
+    } catch (err) {
+      console.warn("Server leads database sync error, showing local cache:", err);
+      try {
+        const stored = localStorage.getItem("_stealth_operator_leads");
+        if (stored) {
+          setLeads(JSON.parse(stored));
+        }
+      } catch (e) {
+        console.error("Could not parse offline cache leads list", e);
+      }
     }
   };
 
   useEffect(() => {
     if (isOpen) {
-      loadLeads();
-      // Auto-unlock in local dev environment for user comfort if they unlocked before
+      const cachedPass = sessionStorage.getItem("_operator_terminal_passcode") || "";
       const sessionUnlock = sessionStorage.getItem("_operator_terminal_unlocked");
-      if (sessionUnlock === "true") {
+      if (sessionUnlock === "true" && cachedPass) {
+        setActivePasscode(cachedPass);
         setIsUnlocked(true);
+        loadLeads(cachedPass);
+      } else {
+        loadLeads();
       }
     }
   }, [isOpen]);
 
-  const handleUnlock = (e: React.FormEvent) => {
+  const hashStringSHA256 = async (input: string): Promise<string> => {
+    const msgUint8 = new TextEncoder().encode(input);
+    const hashBuffer = await crypto.subtle.digest("SHA-256", msgUint8);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    return hashArray.map(b => b.toString(16).padStart(2, "0")).join("");
+  };
+
+  const handleUnlock = async (e: React.FormEvent) => {
     e.preventDefault();
-    const cleanPass = passcode.trim().toLowerCase();
-    
-    // Accept either 'growth' (the company theme) or 'systems' (the slogan) as passwords
-    if (cleanPass === "growth" || cleanPass === "systems" || cleanPass === "admin") {
+    const cleanPass = passcode.trim();
+    if (!cleanPass) return;
+
+    let isMatch = false;
+
+    // 1. Try custom environment variable first
+    const envPasscode = (import.meta as any).env?.VITE_ADMIN_PASSCODE;
+    if (envPasscode && cleanPass.toLowerCase() === envPasscode.trim().toLowerCase()) {
+      isMatch = true;
+    } else {
+      // 2. Cryptographic signature check against target hash of 'ndmendhe1999'
+      const hashedVal = await hashStringSHA256(cleanPass.toLowerCase());
+      const targetHash = "032a9a825c63c481cf992d6adb7a02572a6c1df7a0a006fcbe81f8495eea5e78";
+      if (hashedVal === targetHash) {
+        isMatch = true;
+      }
+    }
+
+    if (isMatch) {
       setIsUnlocked(true);
+      setActivePasscode(cleanPass);
       setErrorMsg("");
       setPasscode("");
       sessionStorage.setItem("_operator_terminal_unlocked", "true");
+      sessionStorage.setItem("_operator_terminal_passcode", cleanPass);
+      loadLeads(cleanPass);
     } else {
       setErrorMsg("INVALID SECURE KEY PROTOCOL. ACCESS DENIED.");
       setTimeout(() => setErrorMsg(""), 3000);
@@ -77,11 +139,13 @@ export default function AdminTerminal({ isOpen, onClose }: AdminTerminalProps) {
 
   const clearSession = () => {
     setIsUnlocked(false);
+    setActivePasscode("");
     sessionStorage.removeItem("_operator_terminal_unlocked");
+    sessionStorage.removeItem("_operator_terminal_passcode");
   };
 
-  // Generate real high-quality sample leads so the client has something immediately to see!
-  const generateSampleLeads = () => {
+  // Generate mock leads for testing / demo sandbox
+  const generateSampleLeads = async () => {
     const samples: Lead[] = [
       {
         id: "OP-920485",
@@ -112,27 +176,84 @@ export default function AdminTerminal({ isOpen, onClose }: AdminTerminalProps) {
       }
     ];
 
+    const code = activePasscode || sessionStorage.getItem("_operator_terminal_passcode") || "";
+
+    // Upload samples to Express server directly if online
+    if (code) {
+      try {
+        for (const sample of samples) {
+          await fetch("/api/leads", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(sample)
+          });
+        }
+        await loadLeads(code);
+        return;
+      } catch (err) {
+        console.warn("Failed posting samples to server, writing locally only", err);
+      }
+    }
+
     const updated = [...samples, ...leads];
-    // De-duplicate just in case
     const unique = Array.from(new Map(updated.map(item => [item.email, item])).values());
     localStorage.setItem("_stealth_operator_leads", JSON.stringify(unique));
     setLeads(unique);
   };
 
-  const deleteLead = (id: string, e: React.MouseEvent) => {
+  const deleteLead = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (confirm("Are you sure you want to delete this lead record from this browser storage?")) {
-      const filtered = leads.filter(l => l.id !== id);
-      localStorage.setItem("_stealth_operator_leads", JSON.stringify(filtered));
-      setLeads(filtered);
-      if (selectedLead?.id === id) {
-        setSelectedLead(null);
+    if (confirm("Are you sure you want to permanently delete this lead record?")) {
+      const code = activePasscode || sessionStorage.getItem("_operator_terminal_passcode") || "";
+      
+      try {
+        const response = await fetch(`/api/leads/${id}`, {
+          method: "DELETE",
+          headers: {
+            "x-admin-passcode": code
+          }
+        });
+
+        if (response.ok) {
+          const filtered = leads.filter(l => l.id !== id);
+          setLeads(filtered);
+          localStorage.setItem("_stealth_operator_leads", JSON.stringify(filtered));
+          if (selectedLead?.id === id) {
+            setSelectedLead(null);
+          }
+        } else {
+          throw new Error("Access rejected by server database");
+        }
+      } catch (err) {
+        console.warn("Server delete failed, fallback updating local cache:", err);
+        const filtered = leads.filter(l => l.id !== id);
+        setLeads(filtered);
+        localStorage.setItem("_stealth_operator_leads", JSON.stringify(filtered));
+        if (selectedLead?.id === id) {
+          setSelectedLead(null);
+        }
       }
     }
   };
 
-  const resetAllLeads = () => {
-    if (confirm("CRITICAL PROTOCOL: Do you want to wipe all records in the browser database? File exports are recommended prior to reset.")) {
+  const resetAllLeads = async () => {
+    if (confirm("CRITICAL PROTOCOL: Do you want to wipe all records? Prior file backups are recommended.")) {
+      const code = activePasscode || sessionStorage.getItem("_operator_terminal_passcode") || "";
+      
+      // Wipe remote ones if online
+      if (code && leads.length > 0) {
+        try {
+          for (const lead of leads) {
+            await fetch(`/api/leads/${lead.id}`, {
+              method: "DELETE",
+              headers: { "x-admin-passcode": code }
+            });
+          }
+        } catch (err) {
+          console.warn("Failed purging remote records", err);
+        }
+      }
+
       localStorage.removeItem("_stealth_operator_leads");
       setLeads([]);
       setSelectedLead(null);
@@ -261,7 +382,7 @@ export default function AdminTerminal({ isOpen, onClose }: AdminTerminalProps) {
                       <input
                         id="terminal-passcode-input"
                         type="password"
-                        placeholder="Hint: Enter 'growth' or 'systems'"
+                        placeholder="Enter secure decryption key..."
                         value={passcode}
                         onChange={(e) => setPasscode(e.target.value)}
                         autoFocus

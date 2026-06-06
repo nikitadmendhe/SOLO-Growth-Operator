@@ -39,17 +39,44 @@ export default function ContactForm() {
     return Object.keys(newErrors).length === 0;
   };
 
-  const handleSubmit = (e: FormEvent) => {
+  const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     if (!validate()) return;
 
     setIsLoading(true);
 
-    // Simulate luxury system submission latency
-    setTimeout(() => {
+    try {
+      const response = await fetch("/api/leads", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          name: form.name,
+          email: form.email,
+          handle: form.handle,
+          revenue: form.revenue,
+          message: form.message
+        })
+      });
+
+      if (response.ok) {
+        const savedLead = await response.json();
+        try {
+          const storedLeads = localStorage.getItem("_stealth_operator_leads");
+          const parsedLeads = storedLeads ? JSON.parse(storedLeads) : [];
+          localStorage.setItem("_stealth_operator_leads", JSON.stringify([savedLead, ...parsedLeads]));
+        } catch (err) {
+          console.error("Local sync failed", err);
+        }
+        setIsSubmitted(true);
+        setSubmissionId(savedLead.id);
+      } else {
+        throw new Error("API post rejected");
+      }
+    } catch (err) {
+      console.warn("Server persist failed or offline, falling back to local storage path", err);
       const generatedId = "OP-" + Math.floor(100000 + Math.random() * 900000);
-      
-      // Persist submission record
       try {
         const storedLeads = localStorage.getItem("_stealth_operator_leads");
         const parsedLeads = storedLeads ? JSON.parse(storedLeads) : [];
@@ -63,14 +90,14 @@ export default function ContactForm() {
           timestamp: new Date().toISOString()
         };
         localStorage.setItem("_stealth_operator_leads", JSON.stringify([newLead, ...parsedLeads]));
-      } catch (err) {
-        console.error("Could not write lead to system registry", err);
+      } catch (localErr) {
+        console.error("Could not write local lead", localErr);
       }
-
-      setIsLoading(false);
       setIsSubmitted(true);
       setSubmissionId(generatedId);
-    }, 1500);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (
