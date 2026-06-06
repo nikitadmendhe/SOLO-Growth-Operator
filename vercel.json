@@ -3,6 +3,14 @@
   "trailingSlash": false,
   "rewrites": [
     {
+      "source": "/api/leads/:id",
+      "destination": "/api/leads.ts?id=:id"
+    },
+    {
+      "source": "/api/leads",
+      "destination": "/api/leads.ts"
+    },
+    {
       "source": "/(.*)",
       "destination": "/index.html"
     }
