@@ -1,3 +1,4 @@
+import { useState } from "react";
 import Hero from "./components/Hero";
 import Services from "./components/Services";
 import HowItWorks from "./components/HowItWorks";
@@ -5,9 +6,12 @@ import TargetAudience from "./components/TargetAudience";
 import Testimonials from "./components/Testimonials";
 import ContactForm from "./components/ContactForm";
 import FloatingCTA from "./components/FloatingCTA";
-import { EyeOff, ShieldCheck } from "lucide-react";
+import AdminTerminal from "./components/AdminTerminal";
+import { EyeOff, ShieldCheck, Terminal } from "lucide-react";
 
 export default function App() {
+  const [isAdminOpen, setIsAdminOpen] = useState(false);
+
   const scrollToTop = () => {
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
@@ -27,6 +31,9 @@ export default function App() {
 
       {/* Floating CTA follows scroll past hero */}
       <FloatingCTA />
+
+      {/* Secure Admin Terminal Portal */}
+      <AdminTerminal isOpen={isAdminOpen} onClose={() => setIsAdminOpen(false)} />
 
       {/* High-End Stealth Footer */}
       <footer id="editorial-footer" className="bg-[#020202] border-t border-neutral-900 py-16 px-6 md:px-16 lg:px-24 text-neutral-500 font-mono text-xs">
@@ -62,12 +69,24 @@ export default function App() {
             >
               Back to System Orbit ▲
             </button>
+            
+            <button
+              onClick={() => setIsAdminOpen(true)}
+              className="text-neutral-400 hover:text-red-500 hover:border-red-550/30 transition-colors uppercase tracking-widest text-[10px] flex items-center gap-1.5 cursor-pointer bg-neutral-950 px-3 py-1.5 border border-neutral-900 rounded-sm mt-2 font-mono"
+            >
+              <Terminal className="w-3.5 h-3.5 text-red-600" />
+              <span>[ LEADS CONSOLE ]</span>
+            </button>
+
             <div className="text-[10px] text-neutral-605 space-y-1 md:text-right pt-4 border-t border-neutral-900 w-full">
               <div>© {new Date().getFullYear()} STEALTH SYSTEMS. ALL RIGHTS RESERVED.</div>
-              <div className="flex justify-start md:justify-end gap-1.5 items-center">
+              <button
+                onClick={() => setIsAdminOpen(true)}
+                className="flex justify-start md:justify-end gap-1.5 items-center text-left md:text-right hover:text-red-500 transition-colors w-full cursor-pointer focus:outline-none"
+              >
                 <ShieldCheck className="w-3.5 h-3.5 text-emerald-500/70" />
                 <span>SECURE RUNTIME PROTOCOL ACTIVE</span>
-              </div>
+              </button>
             </div>
           </div>
 

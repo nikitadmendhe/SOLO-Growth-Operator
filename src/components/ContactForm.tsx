@@ -47,9 +47,29 @@ export default function ContactForm() {
 
     // Simulate luxury system submission latency
     setTimeout(() => {
+      const generatedId = "OP-" + Math.floor(100000 + Math.random() * 900000);
+      
+      // Persist submission record
+      try {
+        const storedLeads = localStorage.getItem("_stealth_operator_leads");
+        const parsedLeads = storedLeads ? JSON.parse(storedLeads) : [];
+        const newLead = {
+          id: generatedId,
+          name: form.name,
+          email: form.email,
+          handle: form.handle,
+          revenue: form.revenue,
+          message: form.message,
+          timestamp: new Date().toISOString()
+        };
+        localStorage.setItem("_stealth_operator_leads", JSON.stringify([newLead, ...parsedLeads]));
+      } catch (err) {
+        console.error("Could not write lead to system registry", err);
+      }
+
       setIsLoading(false);
       setIsSubmitted(true);
-      setSubmissionId("OP-" + Math.floor(100000 + Math.random() * 900000));
+      setSubmissionId(generatedId);
     }, 1500);
   };
 
