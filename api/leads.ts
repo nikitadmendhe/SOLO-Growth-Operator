@@ -1,6 +1,9 @@
 import fs from "fs";
 import path from "path";
 import crypto from "crypto";
+import admin from "firebase-admin";
+import { getApps as getAdminApps, initializeApp as initAdminApp } from "firebase-admin/app";
+import { getFirestore as getAdminFirestore } from "firebase-admin/firestore";
 import { initializeApp as initWebApp, getApps as getWebApps } from "firebase/app";
 import { getFirestore as getWebFirestore, collection, setDoc, getDocs, doc, deleteDoc, query, orderBy } from "firebase/firestore";
 
@@ -20,10 +23,6 @@ async function initFirebase() {
       
       let adminSuccess = false;
       try {
-        const adminAppModule: any = await import("firebase-admin/app");
-        const adminFirestoreModule: any = await import("firebase-admin/firestore");
-        const adminCredentialModule: any = await import("firebase-admin");
-        
         let customCredential;
         if (process.env.FIREBASE_SERVICE_ACCOUNT) {
           try {
@@ -40,7 +39,7 @@ async function initFirebase() {
             }
             
             if (parsed && typeof parsed === "object") {
-              customCredential = adminCredentialModule.credential.cert(parsed);
+              customCredential = admin.credential.cert(parsed);
             } else {
               throw new Error("Service account is not a valid JSON object after parsing. Got: " + typeof parsed);
             }
@@ -57,13 +56,18 @@ async function initFirebase() {
         }
 
         // Handle existing admin apps in serverless context to prevent App named [DEFAULT] already exists error
-        const existingAdminApps = adminAppModule.getApps();
+        const existingAdminApps = getAdminApps();
         const adminApp = existingAdminApps.length > 0 
           ? existingAdminApps[0]
-          : adminAppModule.initializeApp(adminOptions);
+          : initAdminApp(adminOptions);
 
-        const dbAdmin = adminFirestoreModule.getFirestore(adminApp, config.firestoreDatabaseId);
-        console.log("Firebase Admin SDK initialized successfully in Serverless for project:", config.projectId);
+        const dbAdmin = getAdminFirestore(adminApp, config.firestoreDatabaseId);
+
+        // Dynamic Connection Verification: Verify IAM & Credentials by testing a light read.
+        // If the workspace has empty/unauthorized default credentials, this will trigger the fallback chain.
+        await dbAdmin.collection("leads").limit(1).get();
+
+        console.log("Firebase Admin SDK verified and loaded successfully in Serverless for project:", config.projectId);
 
         saveLeadToCloud = async (lead: any) => {
           await dbAdmin.collection("leads").doc(lead.id).set(lead);
@@ -218,6 +222,37 @@ export default async function handler(req: any, res: any) {
       console.log(`Lead ${newLead.id} synced to cloud Firebase database from serverless successfully.`);
     } catch (err) {
       console.error("Failed to sync lead to Firestore in serverless:", err);
+    }
+
+    // Send email notification securely via FormSubmit
+    try {
+      const recipientEmail = process.env.ADMIN_NOTIFICATION_EMAIL || "ndmendhe1999@gmail.com";
+      const subjectLine = `New Contact Form Submission: ${name} [${newLead.id}]`;
+      
+      const emailPayload = {
+        _subject: subjectLine,
+        "Lead ID": newLead.id,
+        "Name / Brand Identity": name,
+        "Email Address": email,
+        "Social Handle / Channel": handle ? `@${handle.replace(/^@/, '')}` : "None Provided",
+        "Monthly Revenue Level": revenue,
+        "Message / Scale Bottlenecks": message || "No description provided",
+        "Registered Timestamp": newLead.timestamp,
+        "_captcha": "false", // Tells FormSubmit to bypass the annoying captcha confirmation page
+        "_honey": "" // Antispam honeypot field
+      };
+
+      await fetch(`https://formsubmit.co/ajax/${recipientEmail}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Accept": "application/json"
+        },
+        body: JSON.stringify(emailPayload)
+      });
+      console.log(`Automated Email notification initiated via FormSubmit in Serverless for recipient: ${recipientEmail}`);
+    } catch (emailErr) {
+      console.error("Error sending email notification via FormSubmit in serverless:", emailErr);
     }
 
     return res.status(201).json(newLead);

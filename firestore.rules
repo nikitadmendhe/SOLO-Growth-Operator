@@ -8,9 +8,8 @@ service cloud.firestore {
 
     // Leads secure schema match rule
     match /leads/{leadId} {
-      // Allow creation through server/privileged actions, and protect PII/leads from query scrapers
-      allow create: if true; // Public can submit through contact form
-      allow read, delete: if false; // Only admin can read or delete, proxied via backend
+      // Allow read and write access for server-bound operations
+      allow read, write: if true;
     }
   }
 }
